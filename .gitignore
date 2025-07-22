@@ -10,3 +10,7 @@ cmd/functional-test/httpx
 cmd/functional-test/*.cfg
 
 .devcontainer
+/httpx
+/dist
+/resume.cfg
+vendor/

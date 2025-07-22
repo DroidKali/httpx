@@ -4,17 +4,24 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/projectdiscovery/cdncheck"
+	"github.com/projectdiscovery/networkpolicy"
 )
 
 // Options contains configuration options for the client
 type Options struct {
 	RandomAgent      bool
 	DefaultUserAgent string
-	HTTPProxy        string
-	SocksProxy       string
-	Threads          int
-	CdnCheck         bool
-	ExcludeCdn       bool
+	Proxy            string
+	// Deprecated: use Proxy
+	HTTPProxy string
+	// Deprecated: use Proxy
+	SocksProxy  string
+	Threads     int
+	CdnCheck    string
+	ExcludeCdn  bool
+	ExtractFqdn bool
 	// Timeout is the maximum time to wait for the request
 	Timeout time.Duration
 	// RetryMax is the maximum number of retries
@@ -35,8 +42,6 @@ type Options struct {
 	VHostIgnoreNumberOfWords  bool
 	VHostIgnoreNumberOfLines  bool
 	VHostStripHTML            bool
-	Allow                     []string
-	Deny                      []string
 	MaxResponseBodySizeToSave int64
 	MaxResponseBodySizeToRead int64
 	UnsafeURI                 string
@@ -44,18 +49,23 @@ type Options struct {
 	customCookies             []*http.Cookie
 	SniName                   string
 	TlsImpersonate            bool
+	NetworkPolicy             *networkpolicy.NetworkPolicy
+	CDNCheckClient            *cdncheck.Client
+	Protocol                  Proto
+	Trace                     bool
 }
 
 // DefaultOptions contains the default options
 var DefaultOptions = Options{
-	RandomAgent:  true,
-	Threads:      25,
-	Timeout:      30 * time.Second,
-	RetryMax:     5,
-	MaxRedirects: 10,
-	Unsafe:       false,
-	CdnCheck:     true,
-	ExcludeCdn:   false,
+	RandomAgent:               true,
+	Threads:                   25,
+	Timeout:                   30 * time.Second,
+	RetryMax:                  5,
+	MaxRedirects:              10,
+	Unsafe:                    false,
+	CdnCheck:                  "true",
+	ExcludeCdn:                false,
+	MaxResponseBodySizeToRead: 1024 * 1024 * 10,
 	// VHOSTs options
 	VHostIgnoreStatusCode:    false,
 	VHostIgnoreContentLength: true,

@@ -1,12 +1,16 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/projectdiscovery/fdmax/autofdmax"
 	"github.com/projectdiscovery/httpx/common/httpx"
+	"github.com/projectdiscovery/mapcidr/asn"
+	stringsutil "github.com/projectdiscovery/utils/strings"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +33,7 @@ func TestRunner_domain_targets(t *testing.T) {
 			got = append(got, target)
 		}
 	}
-	require.ElementsMatch(t, expected, got, "could not exepcted output")
+	require.ElementsMatch(t, expected, got, "could not expected output")
 }
 
 func TestRunner_probeall_targets(t *testing.T) {
@@ -60,7 +64,7 @@ func TestRunner_probeall_targets(t *testing.T) {
 		got = append(got, target)
 	}
 
-	require.ElementsMatch(t, expected, got, "could not exepcted output")
+	require.ElementsMatch(t, expected, got, "could not expected output")
 }
 
 func TestRunner_cidr_targets(t *testing.T) {
@@ -85,10 +89,14 @@ func TestRunner_cidr_targets(t *testing.T) {
 		got = append(got, target)
 	}
 
-	require.ElementsMatch(t, expected, got, "could not exepcted output")
+	require.ElementsMatch(t, expected, got, "could not expected output")
 }
 
 func TestRunner_asn_targets(t *testing.T) {
+	if os.Getenv("PDCP_API_KEY") == "" {
+		return
+	}
+
 	options := &Options{}
 	r, err := New(options)
 	require.Nil(t, err, "could not create httpx runner")
@@ -102,11 +110,17 @@ func TestRunner_asn_targets(t *testing.T) {
 	for _, ip := range ips {
 		expected = append(expected, httpx.Target{Host: ip})
 	}
+
+	if _, err := asn.GetIPAddressesAsStream(input); err != nil && stringsutil.ContainsAnyI(err.Error(), "unauthorized: 401") {
+		t.Skip("skipping asn test due to missing/invalid api key")
+		return
+	}
+
 	got := []httpx.Target{}
 	for target := range r.targets(r.hp, input) {
 		got = append(got, target)
 	}
-	require.ElementsMatch(t, expected, got, "could not exepcted output")
+	require.ElementsMatch(t, expected, got, "could not get expected output")
 }
 
 func TestRunner_countTargetFromRawTarget(t *testing.T) {
@@ -116,30 +130,41 @@ func TestRunner_countTargetFromRawTarget(t *testing.T) {
 
 	input := "example.com"
 	expected := 1
-	got := r.countTargetFromRawTarget(input)
+	got, err := r.countTargetFromRawTarget(input)
+	require.Nil(t, err, "could not count targets")
 	require.Equal(t, expected, got, "got wrong output")
 
 	input = "example.com"
 	expected = 0
 	err = r.hm.Set(input, nil)
 	require.Nil(t, err, "could not set value to hm")
-	got = r.countTargetFromRawTarget(input)
-	require.Equal(t, expected, got, "got wrong output")
-
-	input = ""
-	expected = 0
-	got = r.countTargetFromRawTarget(input)
-	require.Equal(t, expected, got, "got wrong output")
-
-	input = "AS14421"
-	expected = 256
-	got = r.countTargetFromRawTarget(input)
+	got, err = r.countTargetFromRawTarget(input)
+	require.Nil(t, err, "could not count targets")
 	require.Equal(t, expected, got, "got wrong output")
 
 	input = "173.0.84.0/24"
 	expected = 256
-	got = r.countTargetFromRawTarget(input)
+	got, err = r.countTargetFromRawTarget(input)
+	require.Nil(t, err, "could not count targets")
 	require.Equal(t, expected, got, "got wrong output")
+
+	input = ""
+	expected = 0
+	got, err = r.countTargetFromRawTarget(input)
+	require.Nil(t, err, "could not count targets")
+	require.Equal(t, expected, got, "got wrong output")
+
+	if os.Getenv("PDCP_API_KEY") != "" {
+		input = "AS14421"
+		expected = 256
+		got, err = r.countTargetFromRawTarget(input)
+		if err != nil && stringsutil.ContainsAnyI(err.Error(), "unauthorized: 401") {
+			t.Skip("skipping asn test due to missing/invalid api key")
+			return
+		}
+		require.Nil(t, err, "could not count targets")
+		require.Equal(t, expected, got, "got wrong output")
+	}
 }
 
 func TestRunner_urlWithComma_targets(t *testing.T) {
@@ -156,5 +181,44 @@ func TestRunner_urlWithComma_targets(t *testing.T) {
 			got = append(got, target)
 		}
 	}
-	require.ElementsMatch(t, expected, got, "could not exepcted output")
+	require.ElementsMatch(t, expected, got, "could not expected output")
+}
+
+func TestRunner_CSVRow(t *testing.T) {
+	// Create a result with fields that would be vulnerable to CSV injection
+	result := Result{
+		URL:         `=HYPERLINK('https://evil.com','click me')`,
+		Title:       `+CMD('calc')`,
+		ContentType: `-SUM(1+1)`,
+		WebServer:   `@MACRO=Virus()`,
+		StatusCode:  200,
+		Timestamp:   time.Now(),
+	}
+
+	// Call CSVRow to get the sanitized output
+	csvOutput := result.CSVRow(nil)
+
+	// Check that vulnerable fields are properly sanitized with a prefix quote
+	tests := []struct {
+		fieldName string
+		original  string
+		expected  string
+	}{
+		{"URL", result.URL, fmt.Sprintf("'%s", result.URL)},
+		{"Title", result.Title, fmt.Sprintf("'%s", result.Title)},
+		{"ContentType", result.ContentType, fmt.Sprintf("'%s", result.ContentType)},
+		{"WebServer", result.WebServer, fmt.Sprintf("'%s", result.WebServer)},
+	}
+
+	for _, tc := range tests {
+		if !strings.Contains(csvOutput, tc.expected) {
+			t.Errorf("CSV sanitization failed for %s field: expected %q but sanitized value not found in output: %s",
+				tc.fieldName, tc.expected, csvOutput)
+		}
+	}
+
+	// Also check that normal fields remain unsanitized
+	if strings.Contains(csvOutput, "'200") {
+		t.Error("CSV sanitization incorrectly modified non-vulnerable field")
+	}
 }
